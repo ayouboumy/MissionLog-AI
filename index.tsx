@@ -27,9 +27,10 @@ import {
   User,
   Briefcase,
   Sparkles,
-  Globe
+  Globe,
+  Smartphone
 } from 'lucide-react';
-import { Mission, Settings, Template, UserProfile, Language } from './types';
+import { Mission, Settings, Template, UserProfile, Language, BeforeInstallPromptEvent } from './types';
 import { DEFAULT_TEMPLATE_BASE64, TRANSLATIONS } from './constants';
 
 // We access these from window because we loaded them via script tags in index.html
@@ -887,7 +888,23 @@ const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { 
     );
 };
 
-const SettingsView = ({ settings, onUpdate, userProfile, onUpdateProfile, onBack }: { settings: Settings, onUpdate: (s: Settings) => void, userProfile: UserProfile, onUpdateProfile: (p: UserProfile) => void, onBack: () => void }) => {
+const SettingsView = ({ 
+    settings, 
+    onUpdate, 
+    userProfile, 
+    onUpdateProfile, 
+    onBack,
+    installPrompt,
+    onInstall
+}: { 
+    settings: Settings, 
+    onUpdate: (s: Settings) => void, 
+    userProfile: UserProfile, 
+    onUpdateProfile: (p: UserProfile) => void, 
+    onBack: () => void,
+    installPrompt: BeforeInstallPromptEvent | null,
+    onInstall: () => void
+}) => {
     const t = TRANSLATIONS[settings.language];
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -928,6 +945,24 @@ const SettingsView = ({ settings, onUpdate, userProfile, onUpdateProfile, onBack
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-24">
+                {/* Install App Banner (Only visible if installable) */}
+                {installPrompt && (
+                    <section>
+                         <div className="bg-gradient-to-r from-brand-600 to-brand-500 p-4 rounded-2xl shadow-lg flex items-center justify-between text-white">
+                            <div>
+                                <h3 className="font-bold flex items-center gap-2"><Smartphone size={18} /> {t.installApp}</h3>
+                                <p className="text-xs text-brand-100 mt-1">Add to home screen for better experience</p>
+                            </div>
+                            <button 
+                                onClick={onInstall}
+                                className="bg-white text-brand-600 px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-brand-50 transition-colors"
+                            >
+                                Install
+                            </button>
+                         </div>
+                    </section>
+                )}
+
                 {/* Language */}
                 <section>
                     <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><Globe size={18} className="text-brand-500" /> {t.language}</h3>
@@ -1033,6 +1068,9 @@ const App = () => {
     language: 'en'
   });
   
+  // PWA Install Prompt State
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+
   // Initialize user profile from storage to block UI immediately if missing
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_USER_PROFILE);
@@ -1041,6 +1079,30 @@ const App = () => {
   
   const [view, setView] = useState<'dashboard' | 'add' | 'details' | 'settings'>('dashboard');
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+
+  // Capture PWA Install Prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    // Show the install prompt
+    await installPrompt.prompt();
+    // Wait for the user to respond to the prompt
+    const { outcome } = await installPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    // We've used the prompt, and can't use it again, throw it away
+    setInstallPrompt(null);
+  };
 
   // Initialize missions & settings
   useEffect(() => {
@@ -1131,7 +1193,15 @@ const App = () => {
             />
         );
       case 'settings':
-        return <SettingsView settings={settings} onUpdate={setSettings} userProfile={userProfile} onUpdateProfile={setUserProfile} onBack={() => setView('dashboard')} />;
+        return <SettingsView 
+            settings={settings} 
+            onUpdate={setSettings} 
+            userProfile={userProfile} 
+            onUpdateProfile={setUserProfile} 
+            onBack={() => setView('dashboard')}
+            installPrompt={installPrompt}
+            onInstall={handleInstallClick}
+        />;
       default:
         return (
             <Dashboard 

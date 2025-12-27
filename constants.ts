@@ -67,7 +67,8 @@ export const TRANSLATIONS = {
     selectLanguage: 'Select Language',
     exportOptions: 'Export Options',
     cancel: 'Cancel',
-    exportBtn: 'Export'
+    exportBtn: 'Export',
+    installApp: 'Install App'
   },
   ar: {
     greetingMorning: 'صباح الخير',
@@ -132,6 +133,7 @@ export const TRANSLATIONS = {
     selectLanguage: 'اختر اللغة',
     exportOptions: 'خيارات التصدير',
     cancel: 'إلغاء',
-    exportBtn: 'تصدير'
+    exportBtn: 'تصدير',
+    installApp: 'تثبيت التطبيق'
   }
 };
