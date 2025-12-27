@@ -1,0 +1,5 @@
+{
+  "name": "MissionLog AI",
+  "description": "A mobile-first field mission tracker for professionals. Features AI-powered data entry, automated DOCX reporting with custom templates, and smart email drafting.",
+  "requestFramePermissions": []
+}
