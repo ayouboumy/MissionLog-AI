@@ -78,6 +78,10 @@ const getGreeting = (t: any) => {
 };
 
 const base64ToArrayBuffer = (base64: string) => {
+    // Basic validation
+    if (!base64 || base64.length % 4 !== 0) {
+        throw new Error("Invalid Base64 string");
+    }
     const binaryString = window.atob(base64.replace(/[\s\n\r]/g, ''));
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
@@ -103,17 +107,22 @@ const getTemplateBuffer = async (settings: Settings): Promise<ArrayBuffer> => {
     // 2. Default.docx from public folder
     try {
         const response = await fetch('./default.docx');
-        if (response.ok) {
+        // Vercel SPA returns 200 OK with HTML content for missing files (rewrites). 
+        // We must check content-type or verify content.
+        const contentType = response.headers.get('content-type');
+        if (response.ok && contentType && !contentType.includes('text/html')) {
             const buffer = await response.arrayBuffer();
             if (buffer.byteLength > 0) {
                  return buffer;
             }
+        } else {
+             console.warn("default.docx not found or returned HTML, switching to fallback.");
         }
     } catch (e) {
         console.warn("Could not fetch default.docx, using fallback.");
     }
 
-    // 3. Fallback to internal Base64
+    // 3. Fallback to internal Base64 (Guaranteed to exist)
     return base64ToArrayBuffer(DEFAULT_TEMPLATE_BASE64);
 };
 
@@ -289,6 +298,201 @@ const OnboardingView = ({ onSave, settings, onUpdateSettings }: { onSave: (p: Us
         </div>
     );
 };
+
+const SettingsView = ({ 
+    settings, 
+    onUpdate, 
+    userProfile, 
+    onUpdateProfile, 
+    onBack,
+    installPrompt,
+    onInstall
+}: { 
+    settings: Settings, 
+    onUpdate: (s: Settings) => void, 
+    userProfile: UserProfile, 
+    onUpdateProfile: (p: UserProfile) => void, 
+    onBack: () => void,
+    installPrompt: BeforeInstallPromptEvent | null,
+    onInstall: () => void
+}) => {
+    const t = TRANSLATIONS[settings.language];
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const base64 = (event.target?.result as string).split(',')[1];
+                const newTemplate: Template = {
+                    id: generateId(),
+                    name: file.name.replace('.docx', ''),
+                    data: base64
+                };
+                
+                // Automatically set as active since user likely wants to use it
+                onUpdate({
+                    ...settings,
+                    customTemplates: [newTemplate, ...settings.customTemplates], // Add to top
+                    activeTemplateId: newTemplate.id
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const deleteTemplate = (id: string) => {
+        onUpdate({
+            ...settings,
+            customTemplates: settings.customTemplates.filter(t => t.id !== id),
+            activeTemplateId: settings.activeTemplateId === id ? 'default' : settings.activeTemplateId
+        });
+    };
+
+    const activeTemplateName = settings.activeTemplateId === 'default' 
+        ? t.defaultTemplate 
+        : settings.customTemplates.find(t => t.id === settings.activeTemplateId)?.name || 'Unknown';
+
+    return (
+        <div className="flex flex-col h-full bg-white">
+            <div className="p-4 border-b border-gray-100 flex items-center gap-3 sticky top-0 bg-white z-10">
+                 <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 rtl:rotate-180"><ChevronLeft size={24} /></button>
+                 <h1 className="font-bold text-lg">{t.settings}</h1>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-24">
+                {/* Install App Banner (Only visible if installable) */}
+                {installPrompt && (
+                    <section>
+                         <div className="bg-gradient-to-r from-brand-600 to-brand-500 p-4 rounded-2xl shadow-lg flex items-center justify-between text-white">
+                            <div>
+                                <h3 className="font-bold flex items-center gap-2"><Smartphone size={18} /> {t.installApp}</h3>
+                                <p className="text-xs text-brand-100 mt-1">Add to home screen for better experience</p>
+                            </div>
+                            <button 
+                                onClick={onInstall}
+                                className="bg-white text-brand-600 px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-brand-50 transition-colors"
+                            >
+                                Install
+                            </button>
+                         </div>
+                    </section>
+                )}
+
+                {/* Report Template */}
+                <section>
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-bold text-gray-900 flex items-center gap-2"><Briefcase size={18} className="text-brand-500" /> {t.templates}</h3>
+                    </div>
+                    
+                    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-brand-500"></div>
+                        
+                        <div className="flex items-start justify-between mb-4 pl-3 rtl:pl-0 rtl:pr-3">
+                            <div>
+                                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Active Template</p>
+                                <h4 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+                                    <FileCheck size={20} className="text-brand-600" />
+                                    {activeTemplateName}
+                                </h4>
+                            </div>
+                            {settings.activeTemplateId !== 'default' && (
+                                <button 
+                                    onClick={() => onUpdate({...settings, activeTemplateId: 'default'})}
+                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Reset to Default"
+                                >
+                                    <RefreshCw size={18} />
+                                </button>
+                            )}
+                        </div>
+
+                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".docx" className="hidden" />
+                        
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            className="w-full py-3 bg-gray-50 border border-dashed border-gray-300 rounded-xl text-brand-600 font-bold text-sm hover:bg-brand-50 hover:border-brand-300 transition-all flex items-center justify-center gap-2"
+                        >
+                            <Upload size={16} />
+                            {settings.activeTemplateId === 'default' ? 'Replace Default Template' : 'Upload New Template'}
+                        </button>
+                    </div>
+
+                    {/* Custom Templates List */}
+                    {settings.customTemplates.length > 0 && (
+                        <div className="mt-4 space-y-2">
+                            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider pl-1">History</p>
+                            {settings.customTemplates.map(tpl => (
+                                <div 
+                                    key={tpl.id}
+                                    onClick={() => onUpdate({...settings, activeTemplateId: tpl.id})}
+                                    className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${settings.activeTemplateId === tpl.id ? 'border-brand-500 bg-brand-50' : 'border-gray-100 bg-gray-50 hover:bg-gray-100'}`}
+                                >
+                                    <span className={`text-sm font-medium ${settings.activeTemplateId === tpl.id ? 'text-brand-800' : 'text-gray-600'}`}>{tpl.name}</span>
+                                    {settings.activeTemplateId !== tpl.id && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); deleteTemplate(tpl.id); }}
+                                            className="text-gray-400 hover:text-red-500 p-1.5"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
+
+                {/* Language */}
+                <section>
+                    <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><Globe size={18} className="text-brand-500" /> {t.language}</h3>
+                    <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
+                        <button 
+                            onClick={() => onUpdate({...settings, language: 'en'})}
+                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${settings.language === 'en' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}
+                        >
+                            English
+                        </button>
+                        <button 
+                            onClick={() => onUpdate({...settings, language: 'ar'})}
+                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${settings.language === 'ar' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}
+                        >
+                            العربية
+                        </button>
+                    </div>
+                </section>
+
+                {/* Profile */}
+                <section>
+                    <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><User size={18} className="text-brand-500" /> {t.profile}</h3>
+                    <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.fullName}</label>
+                            <input type="text" value={userProfile.fullName} onChange={e => onUpdateProfile({...userProfile, fullName: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.profession}</label>
+                            <input type="text" value={userProfile.profession} onChange={e => onUpdateProfile({...userProfile, profession: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
+                         </div>
+                         <div className="grid grid-cols-2 gap-3">
+                             <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.cni}</label>
+                                <input type="text" value={userProfile.cni} onChange={e => onUpdateProfile({...userProfile, cni: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
+                             </div>
+                             <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.ppn}</label>
+                                <input type="text" value={userProfile.ppn} onChange={e => onUpdateProfile({...userProfile, ppn: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
+                             </div>
+                         </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    );
+};
+
+// ... CalendarWidget, Dashboard, MissionEditor, MissionDetails remain the same ...
 
 const CalendarWidget = ({ 
     missions, 
@@ -980,100 +1184,181 @@ const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { 
 };
 
 const App = () => {
-    const [missions, setMissions] = useState<Mission[]>([]);
-    const [settings, setSettings] = useState<Settings>({ activeTemplateId: 'default', customTemplates: [], language: 'en' });
-    const [userProfile, setUserProfile] = useState<UserProfile>({ fullName: '', profession: '', cni: '', ppn: '' });
-    const [view, setView] = useState<'onboarding' | 'dashboard' | 'editor' | 'details'>('onboarding');
-    const [viewMissionId, setViewMissionId] = useState<string | null>(null);
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [settings, setSettings] = useState<Settings>({
+    activeTemplateId: 'default',
+    customTemplates: [],
+    language: 'en'
+  });
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
-    useEffect(() => {
-        const storedMissions = localStorage.getItem(STORAGE_KEY_MISSIONS);
-        if (storedMissions) setMissions(JSON.parse(storedMissions));
-        
-        const storedSettings = localStorage.getItem(STORAGE_KEY_SETTINGS);
-        if (storedSettings) setSettings(JSON.parse(storedSettings));
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_USER_PROFILE);
+    return saved ? JSON.parse(saved) : null;
+  });
+  
+  const [view, setView] = useState<'dashboard' | 'add' | 'details' | 'settings'>('dashboard');
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
 
-        const storedProfile = localStorage.getItem(STORAGE_KEY_USER_PROFILE);
-        if (storedProfile) {
-            setUserProfile(JSON.parse(storedProfile));
-            setView('dashboard');
-        }
-    }, []);
+  // Capture PWA Install Prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
 
-    useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_MISSIONS, JSON.stringify(missions));
-    }, [missions]);
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
-    useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
-    }, [settings]);
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    setInstallPrompt(null);
+  };
 
-    useEffect(() => {
+  useEffect(() => {
+    const savedMissions = localStorage.getItem(STORAGE_KEY_MISSIONS);
+    if (savedMissions) setMissions(JSON.parse(savedMissions));
+
+    const savedSettings = localStorage.getItem(STORAGE_KEY_SETTINGS);
+    if (savedSettings) setSettings(JSON.parse(savedSettings));
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+    document.documentElement.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
+  }, [settings.language]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_MISSIONS, JSON.stringify(missions));
+  }, [missions]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    if (userProfile) {
         localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(userProfile));
-    }, [userProfile]);
+    }
+  }, [userProfile]);
 
-    useEffect(() => {
-        document.documentElement.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
-    }, [settings.language]);
+  const addMission = (mission: Mission) => {
+    setMissions([mission, ...missions]);
+    setView('dashboard');
+  };
 
-    const handleSaveProfile = (profile: UserProfile) => {
-        setUserProfile(profile);
+  const updateMission = (id: string, updates: Partial<Mission>) => {
+    setMissions(missions.map(m => m.id === id ? { ...m, ...updates } : m));
+  };
+
+  const deleteMission = (id: string) => {
+    setMissions(missions.filter(m => m.id !== id));
+    if (selectedMissionId === id) {
+        setSelectedMissionId(null);
         setView('dashboard');
-    };
-
-    const handleSaveMission = (mission: Mission) => {
-        setMissions(prev => [mission, ...prev]);
-        setView('dashboard');
-    };
-
-    const handleDeleteMission = () => {
-        if (viewMissionId) {
-            setMissions(prev => prev.filter(m => m.id !== viewMissionId));
-            setView('dashboard');
-            setViewMissionId(null);
-        }
-    };
-
-    if (view === 'onboarding') {
-        return <OnboardingView onSave={handleSaveProfile} settings={settings} onUpdateSettings={setSettings} />;
     }
+  };
 
-    if (view === 'editor') {
-        return <MissionEditor onSave={handleSaveMission} onCancel={() => setView('dashboard')} settings={settings} />;
-    }
+  const goToDetails = (id: string) => {
+    setSelectedMissionId(id);
+    setView('details');
+  };
 
-    if (view === 'details' && viewMissionId) {
-        const mission = missions.find(m => m.id === viewMissionId);
-        if (mission) {
-            return (
-                <MissionDetails 
-                    mission={mission} 
-                    settings={settings} 
-                    userProfile={userProfile} 
-                    onBack={() => setView('dashboard')} 
-                    onDelete={handleDeleteMission}
-                />
-            );
-        }
-    }
+  const t = TRANSLATIONS[settings.language];
 
-    return (
-        <Dashboard 
-            missions={missions} 
+  if (!userProfile) {
+      return <OnboardingView onSave={setUserProfile} settings={settings} onUpdateSettings={setSettings} />;
+  }
+
+  const renderView = () => {
+    switch (view) {
+      case 'dashboard':
+        return (
+            <Dashboard 
+                missions={missions} 
+                settings={settings}
+                userProfile={userProfile}
+                onSelect={goToDetails} 
+                onAdd={() => setView('add')}
+                onOpenSettings={() => setView('settings')}
+            />
+        );
+      case 'add':
+        return <MissionEditor onSave={addMission} onCancel={() => setView('dashboard')} settings={settings} />;
+      case 'details':
+        const mission = missions.find(m => m.id === selectedMissionId);
+        if (!mission) return <div className="p-4">Mission not found</div>;
+        return (
+            <MissionDetails 
+                mission={mission} 
+                settings={settings}
+                userProfile={userProfile}
+                onBack={() => setView('dashboard')} 
+                onDelete={() => deleteMission(mission.id)}
+            />
+        );
+      case 'settings':
+        return <SettingsView 
             settings={settings} 
+            onUpdate={setSettings} 
             userProfile={userProfile} 
-            onSelect={(id) => { setViewMissionId(id); setView('details'); }}
-            onAdd={() => setView('editor')}
-            onOpenSettings={() => {
-                // Settings view implementation could be added here
-                alert("Settings not implemented in this demo.");
-            }}
-        />
-    );
+            onUpdateProfile={setUserProfile} 
+            onBack={() => setView('dashboard')}
+            installPrompt={installPrompt}
+            onInstall={handleInstallClick}
+        />;
+      default:
+        return (
+            <Dashboard 
+                missions={missions} 
+                settings={settings}
+                userProfile={userProfile}
+                onSelect={goToDetails} 
+                onAdd={() => setView('add')}
+                onOpenSettings={() => setView('settings')}
+            />
+        );
+    }
+  };
+
+  return (
+    <div 
+        className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col shadow-2xl overflow-hidden relative font-sans text-gray-900 group"
+        style={{ height: '100dvh' }}
+    >
+      <div className="flex-1 overflow-y-auto no-scrollbar bg-gray-50 pb-20">
+        {renderView()}
+      </div>
+
+      <div className="absolute bottom-6 left-4 right-4 h-16 bg-white/90 backdrop-blur-md border border-white/50 rounded-2xl shadow-soft flex justify-around items-center z-20">
+        <button 
+            onClick={() => setView('dashboard')}
+            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'dashboard' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
+        >
+            <Home size={24} className={view === 'dashboard' ? 'fill-current opacity-20' : ''} />
+        </button>
+        
+        <button 
+            onClick={() => setView('add')}
+            className="w-14 h-14 -mt-8 bg-gradient-to-tr from-brand-600 to-brand-500 text-white rounded-full shadow-lg shadow-brand-500/30 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 border-4 border-gray-50"
+        >
+            <Plus size={28} />
+        </button>
+
+         <button 
+            onClick={() => setView('settings')}
+            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'settings' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
+        >
+            <SettingsIcon size={24} className={view === 'settings' ? 'animate-spin-slow' : ''} />
+        </button>
+      </div>
+    </div>
+  );
 };
 
-const container = document.getElementById('root');
-if (container) {
-    const root = createRoot(container);
-    root.render(<App />);
-}
+const root = createRoot(document.getElementById('root')!);
+root.render(<App />);
