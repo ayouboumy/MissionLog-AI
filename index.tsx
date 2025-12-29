@@ -34,7 +34,8 @@ import {
   FileCheck,
   Copy,
   Sun,
-  Moon
+  Moon,
+  Keyboard
 } from 'lucide-react';
 import { Mission, Settings, Template, UserProfile, Language, BeforeInstallPromptEvent } from './types';
 import { DEFAULT_TEMPLATE_BASE64, TRANSLATIONS } from './constants';
@@ -275,7 +276,8 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
         </div>
       );
     }
-    return this.props.children;
+    // Fix: Cast this to any to avoid "Property 'props' does not exist on type 'ErrorBoundary'" TypeScript error
+    return (this as any).props.children;
   }
 }
 
@@ -930,19 +932,15 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
         location: '',
         date: new Date().toISOString().split('T')[0],
         finishDate: new Date().toISOString().split('T')[0], // Added Default End Date
-        startTime: '09:00',
+        startTime: '10:00',
         finishTime: '17:00',
         notes: ''
     });
 
     const t = TRANSLATIONS[settings.language];
 
-    // Using Standard Icons to avoid import errors with Sunrise/Sunset if library version mismatch
-    const timePresets = [
-        { label: 'Morning', sub: '08:00 - 12:00', start: '08:00', end: '12:00', icon: Sun },
-        { label: 'Afternoon', sub: '13:00 - 17:00', start: '13:00', end: '17:00', icon: Sun },
-        { label: 'Full Day', sub: '09:00 - 17:00', start: '09:00', end: '17:00', icon: Clock },
-    ];
+    const START_HOURS = ['04:00', '10:00', '17:00'];
+    const END_HOURS = ['04:00', '10:00', '17:00', '22:00'];
 
     const handleMagicFill = async () => {
         if (!magicInput.trim()) return;
@@ -1010,10 +1008,6 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
             notes: form.notes || '',
             createdAt: Date.now()
         });
-    };
-
-    const applyTimePreset = (start: string, end: string) => {
-        setForm({...form, startTime: start, finishTime: end});
     };
 
     return (
@@ -1117,34 +1111,56 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
                                 <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.time}</label>
                                 <button 
                                     onClick={() => setTimeMode(timeMode === 'presets' ? 'custom' : 'presets')}
-                                    className="text-[10px] text-brand-600 font-bold bg-brand-50 px-2 py-1 rounded-lg"
+                                    className="text-[10px] text-brand-600 font-bold bg-brand-50 px-2 py-1 rounded-lg flex items-center gap-1"
                                 >
-                                    {timeMode === 'presets' ? 'Switch to Custom' : 'Switch to Quick Select'}
+                                    {timeMode === 'presets' ? (
+                                        <><span>Manual Input</span> <Keyboard size={12} /></>
+                                    ) : (
+                                        <><span>Quick Select</span> <Clock size={12} /></>
+                                    )}
                                 </button>
                              </div>
 
                              {timeMode === 'presets' ? (
-                                <div className="grid grid-cols-3 gap-2">
-                                    {timePresets.map((preset) => {
-                                        const Icon = preset.icon;
-                                        const isSelected = form.startTime === preset.start && form.finishTime === preset.end;
-                                        return (
-                                            <button 
-                                                key={preset.label}
-                                                onClick={() => applyTimePreset(preset.start, preset.end)}
-                                                className={`
-                                                    flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all
-                                                    ${isSelected 
-                                                        ? 'border-brand-500 bg-brand-50 text-brand-700' 
-                                                        : 'border-gray-100 bg-white text-gray-500 hover:bg-gray-50'}
-                                                `}
-                                            >
-                                                <Icon size={20} className="mb-1" />
-                                                <span className="text-xs font-bold">{preset.label}</span>
-                                                <span className="text-[9px] opacity-70">{preset.start}-{preset.end}</span>
-                                            </button>
-                                        )
-                                    })}
+                                <div className="space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] uppercase font-bold text-gray-400">Start Time</span>
+                                        <div className="flex gap-2">
+                                            {START_HOURS.map((time) => (
+                                                <button 
+                                                    key={time}
+                                                    onClick={() => setForm({...form, startTime: time})}
+                                                    className={`
+                                                        flex-1 py-2 rounded-lg font-bold text-xs transition-all
+                                                        ${form.startTime === time 
+                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30' 
+                                                            : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'}
+                                                    `}
+                                                >
+                                                    {time}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] uppercase font-bold text-gray-400">End Time</span>
+                                        <div className="flex gap-2">
+                                            {END_HOURS.map((time) => (
+                                                <button 
+                                                    key={time}
+                                                    onClick={() => setForm({...form, finishTime: time})}
+                                                    className={`
+                                                        flex-1 py-2 rounded-lg font-bold text-xs transition-all
+                                                        ${form.finishTime === time 
+                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30' 
+                                                            : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'}
+                                                    `}
+                                                >
+                                                    {time}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                              ) : (
                                 <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
