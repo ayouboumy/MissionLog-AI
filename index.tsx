@@ -32,7 +32,9 @@ import {
   Upload,
   RefreshCw,
   FileCheck,
-  Copy
+  Copy,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { Mission, Settings, Template, UserProfile, Language, BeforeInstallPromptEvent } from './types';
 import { DEFAULT_TEMPLATE_BASE64, TRANSLATIONS } from './constants';
@@ -48,6 +50,17 @@ const STORAGE_KEY_SETTINGS = 'missionlog_settings_v1';
 const STORAGE_KEY_USER_PROFILE = 'missionlog_user_profile_v1';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+// Safe JSON Parse Wrapper
+const safeJsonParse = <T,>(key: string, fallback: T): T => {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : fallback;
+    } catch (e) {
+        console.warn(`Failed to parse ${key}, resetting to default.`);
+        return fallback;
+    }
+};
 
 const formatDate = (dateStr: string, locale: string = 'en-US') => {
   if (!dateStr) return '';
@@ -115,11 +128,9 @@ const getTemplateBuffer = async (settings: Settings): Promise<ArrayBuffer> => {
             if (buffer.byteLength > 0) {
                  return buffer;
             }
-        } else {
-             console.warn("default.docx not found or returned HTML, switching to fallback.");
         }
     } catch (e) {
-        console.warn("Could not fetch default.docx, using fallback.");
+        // Silent fail to fallback
     }
 
     // 3. Fallback to internal Base64 (Guaranteed to exist)
@@ -135,20 +146,32 @@ const generateDocxBlob = async (mission: Mission, settings: Settings, userProfil
         const Docxtemplater = (window as any).docxtemplater;
 
         if (!PizZip || !Docxtemplater) {
-            alert("Document generation libraries not loaded. Please check your internet connection and refresh.");
+            alert("Error: PizZip or Docxtemplater libraries not loaded. Please check internet.");
             return null;
         }
 
-        let templateBuffer = await getTemplateBuffer(settings);
+        let templateBuffer;
+        try {
+            templateBuffer = await getTemplateBuffer(settings);
+        } catch(e) {
+             console.error("Template Buffer Error", e);
+             alert("Error loading template file.");
+             return null;
+        }
+        
         let zip;
-
         // Try to load zip. If custom template is corrupt, fallback to default.
         try {
             zip = new PizZip(templateBuffer);
         } catch (e) {
             console.error("Template corrupt, using fallback", e);
-            templateBuffer = base64ToArrayBuffer(DEFAULT_TEMPLATE_BASE64);
-            zip = new PizZip(templateBuffer);
+            try {
+                templateBuffer = base64ToArrayBuffer(DEFAULT_TEMPLATE_BASE64);
+                zip = new PizZip(templateBuffer);
+            } catch(fallbackError) {
+                alert("Critical Error: Fallback template is also invalid.");
+                return null;
+            }
         }
 
         const data = {
@@ -166,31 +189,38 @@ const generateDocxBlob = async (mission: Mission, settings: Settings, userProfil
         };
 
         // Pass 1: Handle block conditions {}
-        const doc1 = new Docxtemplater(zip, {
-            paragraphLoop: true,
-            linebreaks: true,
-            delimiters: {start: '{', end: '}'},
-            nullGetter: (part: any) => part.raw || ""
-        });
-        doc1.render(data);
+        try {
+            const doc1 = new Docxtemplater(zip, {
+                paragraphLoop: true,
+                linebreaks: true,
+                delimiters: {start: '{', end: '}'},
+                nullGetter: (part: any) => part.raw || ""
+            });
+            doc1.render(data);
 
-        // Pass 2: Handle inline variables ()
-        const zip2 = new PizZip(doc1.getZip().generate({type: "uint8array"}));
-        const doc2 = new Docxtemplater(zip2, {
-            paragraphLoop: true,
-            linebreaks: true,
-            delimiters: {start: '(', end: ')'},
-            nullGetter: (part: any) => part.raw || ""
-        });
-        doc2.render(data);
+            // Pass 2: Handle inline variables ()
+            const zip2 = new PizZip(doc1.getZip().generate({type: "uint8array"}));
+            const doc2 = new Docxtemplater(zip2, {
+                paragraphLoop: true,
+                linebreaks: true,
+                delimiters: {start: '(', end: ')'},
+                nullGetter: (part: any) => part.raw || ""
+            });
+            doc2.render(data);
 
-        return doc2.getZip().generate({
-            type: "blob",
-            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        });
-    } catch (e) {
-        console.error("Error generating docx", e);
-        alert("Failed to generate document. Please try again.");
+            return doc2.getZip().generate({
+                type: "blob",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            });
+        } catch(renderError: any) {
+             console.error("Render Error", renderError);
+             alert(`Document Generation Error: ${renderError.message}`);
+             return null;
+        }
+
+    } catch (e: any) {
+        console.error("General Generation Error", e);
+        alert(`Failed to generate document: ${e.message}`);
         return null;
     }
 };
@@ -839,16 +869,26 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
     const [mode, setMode] = useState<'magic' | 'manual'>('magic');
     const [magicInput, setMagicInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [timeMode, setTimeMode] = useState<'presets' | 'custom'>('presets');
+    
     const [form, setForm] = useState<Partial<Mission>>({
         title: '',
         location: '',
         date: new Date().toISOString().split('T')[0],
+        finishDate: new Date().toISOString().split('T')[0], // Added Default End Date
         startTime: '09:00',
         finishTime: '17:00',
         notes: ''
     });
 
     const t = TRANSLATIONS[settings.language];
+
+    // Using Standard Icons to avoid import errors with Sunrise/Sunset if library version mismatch
+    const timePresets = [
+        { label: 'Morning', sub: '08:00 - 12:00', start: '08:00', end: '12:00', icon: Sun },
+        { label: 'Afternoon', sub: '13:00 - 17:00', start: '13:00', end: '17:00', icon: Sun },
+        { label: 'Full Day', sub: '09:00 - 17:00', start: '09:00', end: '17:00', icon: Clock },
+    ];
 
     const handleMagicFill = async () => {
         if (!magicInput.trim()) return;
@@ -869,6 +909,7 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
                             title: { type: Type.STRING },
                             location: { type: Type.STRING },
                             date: { type: Type.STRING },
+                            finishDate: { type: Type.STRING },
                             startTime: { type: Type.STRING },
                             finishTime: { type: Type.STRING },
                             notes: { type: Type.STRING }
@@ -880,7 +921,11 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
             const text = response.text;
             if (text) {
                 const data = JSON.parse(text);
-                setForm(prev => ({ ...prev, ...data }));
+                setForm(prev => ({ 
+                    ...prev, 
+                    ...data,
+                    finishDate: data.finishDate || data.date // Ensure finish date is set
+                }));
                 setMode('manual');
             } else {
                 alert("AI returned no data. Please try again.");
@@ -905,12 +950,16 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
             title: form.title || t.untitled,
             location: form.location || '',
             date: form.date || new Date().toISOString().split('T')[0],
-            finishDate: form.date, // simple assumption for single day
+            finishDate: form.finishDate || form.date, 
             startTime: form.startTime,
             finishTime: form.finishTime,
             notes: form.notes || '',
             createdAt: Date.now()
         });
+    };
+
+    const applyTimePreset = (start: string, end: string) => {
+        setForm({...form, startTime: start, finishTime: end});
     };
 
     return (
@@ -986,6 +1035,7 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
                             </div>
                         </div>
 
+                        {/* Dates Section */}
                         <div className="grid grid-cols-2 gap-4">
                              <div className="space-y-1">
                                 <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.startDate}</label>
@@ -997,26 +1047,73 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
                                 />
                              </div>
                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.startTime}</label>
+                                <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.endDate}</label>
                                 <input 
-                                    type="time" 
-                                    value={form.startTime}
-                                    onChange={e => setForm({...form, startTime: e.target.value})}
+                                    type="date" 
+                                    value={form.finishDate}
+                                    onChange={e => setForm({...form, finishDate: e.target.value})}
                                     className="w-full p-3.5 rounded-xl bg-gray-50 border border-gray-100 focus:bg-white focus:border-brand-300 outline-none text-start"
                                 />
                              </div>
                         </div>
 
-                         <div className="grid grid-cols-2 gap-4">
-                             <div className="space-y-1">
-                                <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.endTime}</label>
-                                <input 
-                                    type="time" 
-                                    value={form.finishTime}
-                                    onChange={e => setForm({...form, finishTime: e.target.value})}
-                                    className="w-full p-3.5 rounded-xl bg-gray-50 border border-gray-100 focus:bg-white focus:border-brand-300 outline-none text-start"
-                                />
+                        {/* Time Section - Chips Style */}
+                        <div className="space-y-2">
+                             <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-gray-400 uppercase ml-1 rtl:mr-1 rtl:ml-0">{t.time}</label>
+                                <button 
+                                    onClick={() => setTimeMode(timeMode === 'presets' ? 'custom' : 'presets')}
+                                    className="text-[10px] text-brand-600 font-bold bg-brand-50 px-2 py-1 rounded-lg"
+                                >
+                                    {timeMode === 'presets' ? 'Switch to Custom' : 'Switch to Quick Select'}
+                                </button>
                              </div>
+
+                             {timeMode === 'presets' ? (
+                                <div className="grid grid-cols-3 gap-2">
+                                    {timePresets.map((preset) => {
+                                        const Icon = preset.icon;
+                                        const isSelected = form.startTime === preset.start && form.finishTime === preset.end;
+                                        return (
+                                            <button 
+                                                key={preset.label}
+                                                onClick={() => applyTimePreset(preset.start, preset.end)}
+                                                className={`
+                                                    flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all
+                                                    ${isSelected 
+                                                        ? 'border-brand-500 bg-brand-50 text-brand-700' 
+                                                        : 'border-gray-100 bg-white text-gray-500 hover:bg-gray-50'}
+                                                `}
+                                            >
+                                                <Icon size={20} className="mb-1" />
+                                                <span className="text-xs font-bold">{preset.label}</span>
+                                                <span className="text-[9px] opacity-70">{preset.start}-{preset.end}</span>
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                             ) : (
+                                <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">{t.startTime}</label>
+                                        <input 
+                                            type="time" 
+                                            value={form.startTime}
+                                            onChange={e => setForm({...form, startTime: e.target.value})}
+                                            className="w-full p-3.5 rounded-xl bg-gray-50 border border-gray-100 focus:bg-white focus:border-brand-300 outline-none text-start"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">{t.endTime}</label>
+                                        <input 
+                                            type="time" 
+                                            value={form.finishTime}
+                                            onChange={e => setForm({...form, finishTime: e.target.value})}
+                                            className="w-full p-3.5 rounded-xl bg-gray-50 border border-gray-100 focus:bg-white focus:border-brand-300 outline-none text-start"
+                                        />
+                                    </div>
+                                </div>
+                             )}
                         </div>
 
                         <div className="space-y-1">
@@ -1192,9 +1289,9 @@ const App = () => {
   });
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
+  // Safe Load Initial State with try/catch
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_USER_PROFILE);
-    return saved ? JSON.parse(saved) : null;
+    return safeJsonParse(STORAGE_KEY_USER_PROFILE, null);
   });
   
   const [view, setView] = useState<'dashboard' | 'add' | 'details' | 'settings'>('dashboard');
@@ -1220,11 +1317,15 @@ const App = () => {
   };
 
   useEffect(() => {
-    const savedMissions = localStorage.getItem(STORAGE_KEY_MISSIONS);
-    if (savedMissions) setMissions(JSON.parse(savedMissions));
+    const savedMissions = safeJsonParse(STORAGE_KEY_MISSIONS, []);
+    if (savedMissions) setMissions(savedMissions);
 
-    const savedSettings = localStorage.getItem(STORAGE_KEY_SETTINGS);
-    if (savedSettings) setSettings(JSON.parse(savedSettings));
+    const savedSettings = safeJsonParse(STORAGE_KEY_SETTINGS, {
+        activeTemplateId: 'default',
+        customTemplates: [],
+        language: 'en'
+    });
+    if (savedSettings) setSettings(savedSettings);
   }, []);
 
   useEffect(() => {
