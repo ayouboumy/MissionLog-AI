@@ -3,7 +3,7 @@ const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './manifest.json',
-  './default.docx',
+  // './default.docx', // Uncomment this line ONLY if you have added default.docx to the public folder
   'https://cdn.tailwindcss.com',
   'https://unpkg.com/pizzip@3.1.4/dist/pizzip.min.js',
   'https://unpkg.com/docxtemplater@3.37.11/build/docxtemplater.js',
