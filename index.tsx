@@ -1124,39 +1124,39 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
                              {timeMode === 'presets' ? (
                                 <div className="space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
                                     <div className="space-y-1">
-                                        <span className="text-[10px] uppercase font-bold text-gray-400">Start Time</span>
+                                        <span className="text-[10px] uppercase font-bold text-gray-400">Start Hour</span>
                                         <div className="flex gap-2">
                                             {START_HOURS.map((time) => (
                                                 <button 
                                                     key={time}
                                                     onClick={() => setForm({...form, startTime: time})}
                                                     className={`
-                                                        flex-1 py-2 rounded-lg font-bold text-xs transition-all
+                                                        flex-1 py-3 rounded-xl font-bold text-sm transition-all
                                                         ${form.startTime === time 
-                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30' 
+                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30 ring-2 ring-brand-500 ring-offset-1' 
                                                             : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'}
                                                     `}
                                                 >
-                                                    {time}
+                                                    {time.slice(0, 2)}
                                                 </button>
                                             ))}
                                         </div>
                                     </div>
                                     <div className="space-y-1">
-                                        <span className="text-[10px] uppercase font-bold text-gray-400">End Time</span>
+                                        <span className="text-[10px] uppercase font-bold text-gray-400">End Hour</span>
                                         <div className="flex gap-2">
                                             {END_HOURS.map((time) => (
                                                 <button 
                                                     key={time}
                                                     onClick={() => setForm({...form, finishTime: time})}
                                                     className={`
-                                                        flex-1 py-2 rounded-lg font-bold text-xs transition-all
+                                                        flex-1 py-3 rounded-xl font-bold text-sm transition-all
                                                         ${form.finishTime === time 
-                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30' 
+                                                            ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30 ring-2 ring-brand-500 ring-offset-1' 
                                                             : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'}
                                                     `}
                                                 >
-                                                    {time}
+                                                    {time.slice(0, 2)}
                                                 </button>
                                             ))}
                                         </div>
