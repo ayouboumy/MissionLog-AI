@@ -28,7 +28,10 @@ import {
   Briefcase,
   Sparkles,
   Globe,
-  Smartphone
+  Smartphone,
+  Upload,
+  RefreshCw,
+  FileCheck
 } from 'lucide-react';
 import { Mission, Settings, Template, UserProfile, Language, BeforeInstallPromptEvent } from './types';
 import { DEFAULT_TEMPLATE_BASE64, TRANSLATIONS } from './constants';
@@ -75,10 +78,20 @@ const getGreeting = (t: any) => {
     return t.greetingEvening;
 };
 
+const base64ToArrayBuffer = (base64: string) => {
+    const binaryString = window.atob(base64.replace(/[\s\n\r]/g, ''));
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+};
+
 /**
  * Generates a DOCX Blob for a single mission based on settings.
  */
-const generateDocxBlob = (mission: Mission, settings: Settings, userProfile: UserProfile): Blob | null => {
+const generateDocxBlob = async (mission: Mission, settings: Settings, userProfile: UserProfile): Promise<Blob | null> => {
     try {
         const PizZip = (window as any).PizZip;
         const Docxtemplater = (window as any).docxtemplater;
@@ -86,21 +99,35 @@ const generateDocxBlob = (mission: Mission, settings: Settings, userProfile: Use
         if (!PizZip || !Docxtemplater) throw new Error("Libraries not loaded");
 
         // Determine template data
-        let templateBase64 = DEFAULT_TEMPLATE_BASE64;
-        if (settings.activeTemplateId !== 'default') {
+        let templateBuffer: ArrayBuffer | null = null;
+
+        if (settings.activeTemplateId === 'default') {
+            try {
+                // Try fetching default.docx from public folder
+                const response = await fetch('./default.docx');
+                if (response.ok) {
+                    templateBuffer = await response.arrayBuffer();
+                } else {
+                    console.warn("default.docx not found, using internal fallback.");
+                    throw new Error("File not found");
+                }
+            } catch (e) {
+                // Fallback to internal base64 constant
+                templateBuffer = base64ToArrayBuffer(DEFAULT_TEMPLATE_BASE64);
+            }
+        } else {
             const custom = settings.customTemplates.find(t => t.id === settings.activeTemplateId);
-            if (custom) templateBase64 = custom.data;
+            if (custom) {
+                templateBuffer = base64ToArrayBuffer(custom.data);
+            } else {
+                // Fallback
+                templateBuffer = base64ToArrayBuffer(DEFAULT_TEMPLATE_BASE64);
+            }
         }
 
-        const cleanBase64 = templateBase64.replace(/[\s\n\r]/g, '');
-        const binaryString = window.atob(cleanBase64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
+        if (!templateBuffer) return null;
 
-        const zip = new PizZip(bytes);
+        const zip = new PizZip(templateBuffer);
 
         const data = {
             title: mission.title || "",
@@ -169,7 +196,7 @@ const OnboardingView = ({ onSave, settings, onUpdateSettings }: { onSave: (p: Us
     };
 
     return (
-        <div className="h-full w-full bg-gradient-to-br from-brand-600 to-brand-900 flex flex-col items-center justify-center p-6 text-white animate-in fade-in duration-500 relative overflow-hidden">
+        <div className="h-[100dvh] w-full bg-gradient-to-br from-brand-600 to-brand-900 flex flex-col items-center justify-center p-6 text-white animate-in fade-in duration-500 relative overflow-hidden">
             {/* Abstract Shapes */}
             <div className="absolute top-0 left-0 w-64 h-64 bg-white opacity-5 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl"></div>
             <div className="absolute bottom-0 right-0 w-64 h-64 bg-blue-400 opacity-10 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl"></div>
@@ -387,7 +414,7 @@ const Dashboard = ({ missions, settings, userProfile, onSelect, onAdd, onOpenSet
         const masterZip = new PizZip();
         let count = 0;
         for (const mission of missionsInRange) {
-            const docBlob = generateDocxBlob(mission, settings, userProfile);
+            const docBlob = await generateDocxBlob(mission, settings, userProfile);
             if (docBlob) {
                 const buffer = await docBlob.arrayBuffer();
                 const safeName = mission.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30);
@@ -782,19 +809,25 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
 const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { mission: Mission, settings: Settings, userProfile: UserProfile, onBack: () => void, onDelete: () => void }) => {
     const t = TRANSLATIONS[settings.language];
     const [isDrafting, setIsDrafting] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
 
-    const handleDownload = () => {
-        const blob = generateDocxBlob(mission, settings, userProfile);
-        if (blob) {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            const safeName = mission.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30);
-            a.download = `${mission.date}_${safeName}.docx`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+    const handleDownload = async () => {
+        setIsDownloading(true);
+        try {
+            const blob = await generateDocxBlob(mission, settings, userProfile);
+            if (blob) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const safeName = mission.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30);
+                a.download = `${mission.date}_${safeName}.docx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        } finally {
+            setIsDownloading(false);
         }
     };
 
@@ -870,9 +903,10 @@ const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { 
             <div className="p-4 border-t border-gray-100 bg-white grid grid-cols-2 gap-3 pb-24">
                 <button 
                     onClick={handleDownload}
+                    disabled={isDownloading}
                     className="flex flex-col items-center justify-center gap-2 bg-brand-50 text-brand-700 p-4 rounded-2xl font-bold text-xs hover:bg-brand-100 transition-colors"
                 >
-                    <Download size={24} />
+                    {isDownloading ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
                     {t.downloadDocx}
                 </button>
                 <button 
@@ -887,371 +921,3 @@ const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { 
         </div>
     );
 };
-
-const SettingsView = ({ 
-    settings, 
-    onUpdate, 
-    userProfile, 
-    onUpdateProfile, 
-    onBack,
-    installPrompt,
-    onInstall
-}: { 
-    settings: Settings, 
-    onUpdate: (s: Settings) => void, 
-    userProfile: UserProfile, 
-    onUpdateProfile: (p: UserProfile) => void, 
-    onBack: () => void,
-    installPrompt: BeforeInstallPromptEvent | null,
-    onInstall: () => void
-}) => {
-    const t = TRANSLATIONS[settings.language];
-    const fileInputRef = useRef<HTMLInputElement>(null);
-
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const base64 = (event.target?.result as string).split(',')[1];
-                const newTemplate: Template = {
-                    id: generateId(),
-                    name: file.name.replace('.docx', ''),
-                    data: base64
-                };
-                onUpdate({
-                    ...settings,
-                    customTemplates: [...settings.customTemplates, newTemplate],
-                    activeTemplateId: newTemplate.id
-                });
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
-    const deleteTemplate = (id: string) => {
-        onUpdate({
-            ...settings,
-            customTemplates: settings.customTemplates.filter(t => t.id !== id),
-            activeTemplateId: settings.activeTemplateId === id ? 'default' : settings.activeTemplateId
-        });
-    };
-
-    return (
-        <div className="flex flex-col h-full bg-white">
-            <div className="p-4 border-b border-gray-100 flex items-center gap-3 sticky top-0 bg-white z-10">
-                 <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 rtl:rotate-180"><ChevronLeft size={24} /></button>
-                 <h1 className="font-bold text-lg">{t.settings}</h1>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-24">
-                {/* Install App Banner (Only visible if installable) */}
-                {installPrompt && (
-                    <section>
-                         <div className="bg-gradient-to-r from-brand-600 to-brand-500 p-4 rounded-2xl shadow-lg flex items-center justify-between text-white">
-                            <div>
-                                <h3 className="font-bold flex items-center gap-2"><Smartphone size={18} /> {t.installApp}</h3>
-                                <p className="text-xs text-brand-100 mt-1">Add to home screen for better experience</p>
-                            </div>
-                            <button 
-                                onClick={onInstall}
-                                className="bg-white text-brand-600 px-4 py-2 rounded-xl text-xs font-bold shadow hover:bg-brand-50 transition-colors"
-                            >
-                                Install
-                            </button>
-                         </div>
-                    </section>
-                )}
-
-                {/* Language */}
-                <section>
-                    <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><Globe size={18} className="text-brand-500" /> {t.language}</h3>
-                    <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
-                        <button 
-                            onClick={() => onUpdate({...settings, language: 'en'})}
-                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${settings.language === 'en' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}
-                        >
-                            English
-                        </button>
-                        <button 
-                            onClick={() => onUpdate({...settings, language: 'ar'})}
-                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${settings.language === 'ar' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}
-                        >
-                            العربية
-                        </button>
-                    </div>
-                </section>
-
-                {/* Profile */}
-                <section>
-                    <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><User size={18} className="text-brand-500" /> {t.profile}</h3>
-                    <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                         <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.fullName}</label>
-                            <input type="text" value={userProfile.fullName} onChange={e => onUpdateProfile({...userProfile, fullName: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
-                         </div>
-                         <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.profession}</label>
-                            <input type="text" value={userProfile.profession} onChange={e => onUpdateProfile({...userProfile, profession: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
-                         </div>
-                         <div className="grid grid-cols-2 gap-3">
-                             <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.cni}</label>
-                                <input type="text" value={userProfile.cni} onChange={e => onUpdateProfile({...userProfile, cni: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.ppn}</label>
-                                <input type="text" value={userProfile.ppn} onChange={e => onUpdateProfile({...userProfile, ppn: e.target.value})} className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm" />
-                             </div>
-                         </div>
-                    </div>
-                </section>
-
-                {/* Templates */}
-                <section>
-                    <div className="flex justify-between items-end mb-3">
-                        <h3 className="font-bold text-gray-900 flex items-center gap-2"><Briefcase size={18} className="text-brand-500" /> {t.templates}</h3>
-                        <button onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-brand-600 bg-brand-50 hover:bg-brand-100 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
-                            <Plus size={14} /> {t.uploadTemplate}
-                        </button>
-                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".docx" className="hidden" />
-                    </div>
-
-                    <div className="space-y-2">
-                        {/* Default */}
-                        <div 
-                            onClick={() => onUpdate({...settings, activeTemplateId: 'default'})}
-                            className={`p-4 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${settings.activeTemplateId === 'default' ? 'border-brand-500 bg-brand-50' : 'border-gray-100 bg-gray-50 hover:border-brand-200'}`}
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${settings.activeTemplateId === 'default' ? 'border-brand-600' : 'border-gray-400'}`}>
-                                    {settings.activeTemplateId === 'default' && <div className="w-2 h-2 rounded-full bg-brand-600" />}
-                                </div>
-                                <span className="text-sm font-bold text-gray-800">{t.defaultTemplate}</span>
-                            </div>
-                        </div>
-
-                        {/* Customs */}
-                        {settings.customTemplates.map(tpl => (
-                            <div 
-                                key={tpl.id}
-                                onClick={() => onUpdate({...settings, activeTemplateId: tpl.id})}
-                                className={`p-4 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${settings.activeTemplateId === tpl.id ? 'border-brand-500 bg-brand-50' : 'border-gray-100 bg-gray-50 hover:border-brand-200'}`}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${settings.activeTemplateId === tpl.id ? 'border-brand-600' : 'border-gray-400'}`}>
-                                        {settings.activeTemplateId === tpl.id && <div className="w-2 h-2 rounded-full bg-brand-600" />}
-                                    </div>
-                                    <span className="text-sm font-bold text-gray-800">{tpl.name}</span>
-                                </div>
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); deleteTemplate(tpl.id); }}
-                                    className="text-gray-400 hover:text-red-500 p-1"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            </div>
-        </div>
-    );
-};
-
-const App = () => {
-  // State
-  const [missions, setMissions] = useState<Mission[]>([]);
-  const [settings, setSettings] = useState<Settings>({
-    activeTemplateId: 'default',
-    customTemplates: [],
-    language: 'en'
-  });
-  
-  // PWA Install Prompt State
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-
-  // Initialize user profile from storage to block UI immediately if missing
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_USER_PROFILE);
-    return saved ? JSON.parse(saved) : null;
-  });
-  
-  const [view, setView] = useState<'dashboard' | 'add' | 'details' | 'settings'>('dashboard');
-  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
-
-  // Capture PWA Install Prompt
-  useEffect(() => {
-    const handler = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-      // Stash the event so it can be triggered later.
-      setInstallPrompt(e as BeforeInstallPromptEvent);
-    };
-
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
-
-  const handleInstallClick = async () => {
-    if (!installPrompt) return;
-    // Show the install prompt
-    await installPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await installPrompt.userChoice;
-    console.log(`User response to the install prompt: ${outcome}`);
-    // We've used the prompt, and can't use it again, throw it away
-    setInstallPrompt(null);
-  };
-
-  // Initialize missions & settings
-  useEffect(() => {
-    const savedMissions = localStorage.getItem(STORAGE_KEY_MISSIONS);
-    if (savedMissions) setMissions(JSON.parse(savedMissions));
-
-    const savedSettings = localStorage.getItem(STORAGE_KEY_SETTINGS);
-    if (savedSettings) setSettings(JSON.parse(savedSettings));
-  }, []);
-
-  // Update HTML dir and lang based on settings
-  useEffect(() => {
-    document.documentElement.lang = settings.language;
-    document.documentElement.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
-  }, [settings.language]);
-
-  // Persistence
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_MISSIONS, JSON.stringify(missions));
-  }, [missions]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
-    if (userProfile) {
-        localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(userProfile));
-    }
-  }, [userProfile]);
-
-  // Actions
-  const addMission = (mission: Mission) => {
-    setMissions([mission, ...missions]);
-    setView('dashboard');
-  };
-
-  const updateMission = (id: string, updates: Partial<Mission>) => {
-    setMissions(missions.map(m => m.id === id ? { ...m, ...updates } : m));
-  };
-
-  const deleteMission = (id: string) => {
-    setMissions(missions.filter(m => m.id !== id));
-    if (selectedMissionId === id) {
-        setSelectedMissionId(null);
-        setView('dashboard');
-    }
-  };
-
-  const goToDetails = (id: string) => {
-    setSelectedMissionId(id);
-    setView('details');
-  };
-
-  const t = TRANSLATIONS[settings.language];
-
-  // If no user profile, show onboarding immediately
-  if (!userProfile) {
-      return <OnboardingView onSave={setUserProfile} settings={settings} onUpdateSettings={setSettings} />;
-  }
-
-  // Views
-  const renderView = () => {
-    switch (view) {
-      case 'dashboard':
-        return (
-            <Dashboard 
-                missions={missions} 
-                settings={settings}
-                userProfile={userProfile}
-                onSelect={goToDetails} 
-                onAdd={() => setView('add')}
-                onOpenSettings={() => setView('settings')}
-            />
-        );
-      case 'add':
-        return <MissionEditor onSave={addMission} onCancel={() => setView('dashboard')} settings={settings} />;
-      case 'details':
-        const mission = missions.find(m => m.id === selectedMissionId);
-        if (!mission) return <div className="p-4">Mission not found</div>;
-        return (
-            <MissionDetails 
-                mission={mission} 
-                settings={settings}
-                userProfile={userProfile}
-                onBack={() => setView('dashboard')} 
-                onDelete={() => deleteMission(mission.id)}
-            />
-        );
-      case 'settings':
-        return <SettingsView 
-            settings={settings} 
-            onUpdate={setSettings} 
-            userProfile={userProfile} 
-            onUpdateProfile={setUserProfile} 
-            onBack={() => setView('dashboard')}
-            installPrompt={installPrompt}
-            onInstall={handleInstallClick}
-        />;
-      default:
-        return (
-            <Dashboard 
-                missions={missions} 
-                settings={settings}
-                userProfile={userProfile}
-                onSelect={goToDetails} 
-                onAdd={() => setView('add')}
-                onOpenSettings={() => setView('settings')}
-            />
-        );
-    }
-  };
-
-  return (
-    <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col shadow-2xl overflow-hidden relative font-sans text-gray-900 group">
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto no-scrollbar bg-gray-50 pb-20">
-        {renderView()}
-      </div>
-
-      {/* Floating Bottom Navigation (Glassmorphism) */}
-      <div className="absolute bottom-6 left-4 right-4 h-16 bg-white/90 backdrop-blur-md border border-white/50 rounded-2xl shadow-soft flex justify-around items-center z-20">
-        <button 
-            onClick={() => setView('dashboard')}
-            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'dashboard' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-            <Home size={24} className={view === 'dashboard' ? 'fill-current opacity-20' : ''} />
-        </button>
-        
-        {/* Floating Add Button */}
-        <button 
-            onClick={() => setView('add')}
-            className="w-14 h-14 -mt-8 bg-gradient-to-tr from-brand-600 to-brand-500 text-white rounded-full shadow-lg shadow-brand-500/30 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 border-4 border-gray-50"
-        >
-            <Plus size={28} />
-        </button>
-
-         <button 
-            onClick={() => setView('settings')}
-            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'settings' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-            <SettingsIcon size={24} className={view === 'settings' ? 'animate-spin-slow' : ''} />
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// --- Sub-Components ---
-
-const root = createRoot(document.getElementById('root')!);
-root.render(<App />);

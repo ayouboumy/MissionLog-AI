@@ -3,6 +3,7 @@ const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './manifest.json',
+  './default.docx',
   'https://cdn.tailwindcss.com',
   'https://unpkg.com/pizzip@3.1.4/dist/pizzip.min.js',
   'https://unpkg.com/docxtemplater@3.37.11/build/docxtemplater.js',
