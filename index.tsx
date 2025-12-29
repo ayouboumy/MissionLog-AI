@@ -227,6 +227,58 @@ const generateDocxBlob = async (mission: Mission, settings: Settings, userProfil
     }
 };
 
+// --- Error Boundary ---
+
+interface ErrorBoundaryProps {
+  children?: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen p-6 bg-red-50 text-center" style={{ height: '100dvh' }}>
+            <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full border border-red-100">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500">
+                    <Trash2 size={24} />
+                </div>
+                <h1 className="text-lg font-bold text-gray-900 mb-2">Something went wrong</h1>
+                <p className="text-xs text-gray-500 mb-6 font-mono bg-gray-50 p-2 rounded break-all">{this.state.error?.message}</p>
+                
+                <button 
+                    onClick={() => {
+                        localStorage.clear();
+                        window.location.reload();
+                    }} 
+                    className="w-full py-3 bg-red-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-red-500/30 hover:bg-red-700 transition-all"
+                >
+                    Reset App Data
+                </button>
+            </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- Components ---
 
 const OnboardingView = ({ onSave, settings, onUpdateSettings }: { onSave: (p: UserProfile) => void, settings: Settings, onUpdateSettings: (s: Settings) => void }) => {
@@ -530,7 +582,7 @@ const CalendarWidget = ({
     missions, 
     selectedDate, 
     onDateSelect,
-    viewDate,
+    viewDate, 
     onViewDateChange,
     settings
 }: { 
@@ -1133,3 +1185,338 @@ const MissionEditor = ({ onSave, onCancel, settings }: { onSave: (m: Mission) =>
         </div>
     );
 };
+
+const MissionDetails = ({ mission, settings, userProfile, onBack, onDelete }: { mission: Mission, settings: Settings, userProfile: UserProfile, onBack: () => void, onDelete: () => void }) => {
+    const t = TRANSLATIONS[settings.language];
+    const [isDrafting, setIsDrafting] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
+
+    const handleDownload = async () => {
+        setIsDownloading(true);
+        try {
+            const blob = await generateDocxBlob(mission, settings, userProfile);
+            if (blob) {
+                // Ensure filename is safe
+                const safeName = mission.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30);
+                const fileName = `${mission.date}_${safeName}.docx`;
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = fileName;
+                a.style.display = 'none';
+                
+                document.body.appendChild(a);
+                // Trigger download with a slight delay for mobile stability
+                setTimeout(() => {
+                    a.click();
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 100);
+                }, 0);
+            } else {
+                // generateDocxBlob handles alerting for failure
+            }
+        } catch (e) {
+            alert("Unexpected error during download.");
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+
+    const handleShareReport = async () => {
+        setIsDrafting(true);
+        try {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const prompt = `Write a short, professional email report for a field mission.
+            Mission: ${mission.title}
+            Date: ${mission.date}
+            Time: ${mission.startTime} - ${mission.finishTime}
+            Location: ${mission.location}
+            Notes: ${mission.notes}
+            
+            Reporter: ${userProfile.fullName} (${userProfile.profession})
+            Language: ${settings.language === 'ar' ? 'Arabic' : 'English'}
+            
+            Return only the body of the email.`;
+
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: prompt
+            });
+
+            const body = response.text || "";
+            const subject = `${t.missionNotes}: ${mission.title}`;
+            
+            // Mobile Native Share (Web Share API)
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: subject,
+                        text: `${subject}\n\n${body}`,
+                    });
+                } catch (shareError) {
+                    console.log("Share cancelled or failed", shareError);
+                }
+            } else {
+                // Fallback: Copy to Clipboard
+                try {
+                    await navigator.clipboard.writeText(`${subject}\n\n${body}`);
+                    alert("Report copied to clipboard! You can now paste it into your email app.");
+                } catch (clipboardError) {
+                    alert("Could not share or copy. Please try manually copying the notes.");
+                }
+            }
+        } catch (e: any) {
+            console.error(e);
+            alert(`Error generating draft: ${e.message || "Unknown error"}`);
+        } finally {
+            setIsDrafting(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col h-full bg-white">
+            <div className="p-4 border-b border-gray-100 flex items-center gap-3 sticky top-0 bg-white z-10">
+                <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 rtl:rotate-180"><ChevronLeft size={24} /></button>
+                <h1 className="flex-1 font-bold text-lg truncate">{mission.title}</h1>
+                <button onClick={onDelete} className="p-2 hover:bg-red-50 text-red-400 rounded-full"><Trash2 size={20} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                        <div className="text-gray-400 mb-2"><Calendar size={20} /></div>
+                        <p className="text-xs font-bold text-gray-500 uppercase">{t.startDate}</p>
+                        <p className="font-bold text-gray-800">{formatDate(mission.date, settings.language === 'ar' ? 'ar-EG' : 'en-US')}</p>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                         <div className="text-gray-400 mb-2"><Clock size={20} /></div>
+                         <p className="text-xs font-bold text-gray-500 uppercase">{t.time}</p>
+                         <p className="font-bold text-gray-800">{formatTime(mission.startTime)} - {formatTime(mission.finishTime)}</p>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex items-start gap-3">
+                    <MapPin className="text-brand-500 mt-1 shrink-0" size={20} />
+                    <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase mb-1">{t.location}</p>
+                        <p className="font-bold text-gray-800 leading-snug">{mission.location || t.unknown}</p>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 p-5 rounded-2xl border border-gray-100 min-h-[120px]">
+                    <p className="text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2"><FileText size={14}/> {t.notes}</p>
+                    <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-sm">{mission.notes}</p>
+                </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 bg-white grid grid-cols-2 gap-3 pb-24">
+                <button 
+                    onClick={handleDownload}
+                    disabled={isDownloading}
+                    className="flex flex-col items-center justify-center gap-2 bg-brand-50 text-brand-700 p-4 rounded-2xl font-bold text-xs hover:bg-brand-100 transition-colors"
+                >
+                    {isDownloading ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
+                    {t.downloadDocx}
+                </button>
+                <button 
+                    onClick={handleShareReport}
+                    disabled={isDrafting}
+                    className="flex flex-col items-center justify-center gap-2 bg-gray-900 text-white p-4 rounded-2xl font-bold text-xs hover:bg-gray-800 transition-colors"
+                >
+                    {isDrafting ? <Loader2 size={24} className="animate-spin" /> : <Share size={24} />}
+                    {navigator.share ? "Share Report" : "Copy Report"}
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const App = () => {
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [settings, setSettings] = useState<Settings>({
+    activeTemplateId: 'default',
+    customTemplates: [],
+    language: 'en'
+  });
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => 
+    safeJsonParse(STORAGE_KEY_USER_PROFILE, null)
+  );
+  
+  const [view, setView] = useState<'dashboard' | 'add' | 'details' | 'settings'>('dashboard');
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+
+  // Capture PWA Install Prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    setInstallPrompt(null);
+  };
+
+  useEffect(() => {
+    const savedMissions = safeJsonParse(STORAGE_KEY_MISSIONS, []);
+    setMissions(savedMissions);
+
+    const savedSettings = safeJsonParse(STORAGE_KEY_SETTINGS, {
+        activeTemplateId: 'default',
+        customTemplates: [],
+        language: 'en'
+    });
+    setSettings(savedSettings);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+    document.documentElement.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
+  }, [settings.language]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_MISSIONS, JSON.stringify(missions));
+  }, [missions]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    if (userProfile) {
+        localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(userProfile));
+    }
+  }, [userProfile]);
+
+  const addMission = (mission: Mission) => {
+    setMissions([mission, ...missions]);
+    setView('dashboard');
+  };
+
+  const updateMission = (id: string, updates: Partial<Mission>) => {
+    setMissions(missions.map(m => m.id === id ? { ...m, ...updates } : m));
+  };
+
+  const deleteMission = (id: string) => {
+    setMissions(missions.filter(m => m.id !== id));
+    if (selectedMissionId === id) {
+        setSelectedMissionId(null);
+        setView('dashboard');
+    }
+  };
+
+  const goToDetails = (id: string) => {
+    setSelectedMissionId(id);
+    setView('details');
+  };
+
+  const t = TRANSLATIONS[settings.language];
+
+  if (!userProfile) {
+      return <OnboardingView onSave={setUserProfile} settings={settings} onUpdateSettings={setSettings} />;
+  }
+
+  const renderView = () => {
+    switch (view) {
+      case 'dashboard':
+        return (
+            <Dashboard 
+                missions={missions} 
+                settings={settings}
+                userProfile={userProfile}
+                onSelect={goToDetails} 
+                onAdd={() => setView('add')}
+                onOpenSettings={() => setView('settings')}
+            />
+        );
+      case 'add':
+        return <MissionEditor onSave={addMission} onCancel={() => setView('dashboard')} settings={settings} />;
+      case 'details':
+        const mission = missions.find(m => m.id === selectedMissionId);
+        if (!mission) return <div className="p-4">Mission not found</div>;
+        return (
+            <MissionDetails 
+                mission={mission} 
+                settings={settings}
+                userProfile={userProfile}
+                onBack={() => setView('dashboard')} 
+                onDelete={() => deleteMission(mission.id)}
+            />
+        );
+      case 'settings':
+        return <SettingsView 
+            settings={settings} 
+            onUpdate={setSettings} 
+            userProfile={userProfile} 
+            onUpdateProfile={setUserProfile} 
+            onBack={() => setView('dashboard')}
+            installPrompt={installPrompt}
+            onInstall={handleInstallClick}
+        />;
+      default:
+        return (
+            <Dashboard 
+                missions={missions} 
+                settings={settings}
+                userProfile={userProfile}
+                onSelect={goToDetails} 
+                onAdd={() => setView('add')}
+                onOpenSettings={() => setView('settings')}
+            />
+        );
+    }
+  };
+
+  return (
+    <div 
+        className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col shadow-2xl overflow-hidden relative font-sans text-gray-900 group"
+        style={{ height: '100dvh' }}
+    >
+      <div className="flex-1 overflow-y-auto no-scrollbar bg-gray-50 pb-20">
+        {renderView()}
+      </div>
+
+      <div className="absolute bottom-6 left-4 right-4 h-16 bg-white/90 backdrop-blur-md border border-white/50 rounded-2xl shadow-soft flex justify-around items-center z-20">
+        <button 
+            onClick={() => setView('dashboard')}
+            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'dashboard' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
+        >
+            <Home size={24} className={view === 'dashboard' ? 'fill-current opacity-20' : ''} />
+        </button>
+        
+        <button 
+            onClick={() => setView('add')}
+            className="w-14 h-14 -mt-8 bg-gradient-to-tr from-brand-600 to-brand-500 text-white rounded-full shadow-lg shadow-brand-500/30 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 border-4 border-gray-50"
+        >
+            <Plus size={28} />
+        </button>
+
+         <button 
+            onClick={() => setView('settings')}
+            className={`p-2 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 ${view === 'settings' ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
+        >
+            <SettingsIcon size={24} className={view === 'settings' ? 'animate-spin-slow' : ''} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const root = createRoot(document.getElementById('root')!);
+root.render(
+    <ErrorBoundary>
+        <App />
+    </ErrorBoundary>
+);
