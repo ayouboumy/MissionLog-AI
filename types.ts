@@ -16,6 +16,7 @@ export interface Settings {
   activeTemplateId: string; // 'default' or a custom ID
   customTemplates: Template[];
   language: Language;
+  theme: 'light' | 'dark' | 'system';
 }
 
 export interface Template {
