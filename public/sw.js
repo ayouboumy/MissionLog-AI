@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'missionlog-v3';
+const CACHE_NAME = 'missionlog-v4';
 
 // 1. Assets we want to pin immediately (App Shell & critical externals)
 // Note: In production, Vite hashes filenames. We handle those via runtime caching.
@@ -7,7 +7,7 @@ const PRECACHE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  // External Libraries (Versioned/Immutable)
+  // External Libraries (Versioned/Immutable) - MUST MATCH index.html EXACTLY
   'https://cdn.tailwindcss.com',
   'https://unpkg.com/pizzip@3.1.4/dist/pizzip.min.js',
   'https://unpkg.com/docxtemplater@3.37.11/build/docxtemplater.js',
@@ -48,7 +48,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Exclude API calls (Google GenAI) from caching
+  // Exclude API calls (Google GenAI) from caching - always go to network
   if (url.pathname.includes('generativelanguage.googleapis.com')) {
     return;
   }
@@ -71,7 +71,7 @@ self.addEventListener('fetch', (event) => {
           return cachedResponse;
         }
         return fetch(event.request).then((networkResponse) => {
-          // Cache new external assets dynamically (e.g. font files from gstatic)
+          // Cache new external assets dynamically
           if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
             const responseToCache = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => {
@@ -80,7 +80,8 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         }).catch(() => {
-           // Fallback or failures for externals could be handled here
+           // Fallback or failures for externals
+           console.log('[SW] Failed to fetch external asset offline:', url.href);
         });
       })
     );
@@ -105,7 +106,6 @@ self.addEventListener('fetch', (event) => {
           });
           return networkResponse;
         }).catch((err) => {
-            // Network failure is acceptable if we have cache
             console.log('[SW] Network fetch failed for app shell, offline mode active.');
         });
 

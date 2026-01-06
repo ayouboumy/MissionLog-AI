@@ -37,7 +37,9 @@ import {
   Moon,
   Keyboard,
   FileType,
-  Monitor
+  Monitor,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { Mission, Settings, Template, UserProfile, Language, BeforeInstallPromptEvent } from './types';
 import { 
@@ -112,7 +114,7 @@ const base64ToArrayBuffer = (base64: string) => {
 const generatePdfBlob = (mission: Mission, userProfile: UserProfile): Promise<Blob> => {
     return new Promise((resolve, reject) => {
         if (typeof pdfMake === 'undefined') {
-             reject(new Error("PDF generation library not loaded. Check internet connection."));
+             reject(new Error("PDF generation library not loaded. Internet connection required for first load."));
              return;
         }
 
@@ -190,7 +192,7 @@ const generateDocxBlob = async (mission: Mission, settings: Settings, userProfil
         const Docxtemplater = (window as any).docxtemplater;
 
         if (!PizZip || !Docxtemplater) {
-            alert("Error: PizZip or Docxtemplater libraries not loaded. Please check internet.");
+            alert("Error: PizZip or Docxtemplater libraries not loaded. Please check internet connection if this is your first time loading.");
             return null;
         }
 
@@ -661,9 +663,10 @@ interface MissionEditorProps {
     onSave: (m: Mission) => void;
     onCancel: () => void;
     settings: Settings;
+    isOnline: boolean;
 }
 
-const MissionEditor = ({ onSave, onCancel, settings }: MissionEditorProps) => {
+const MissionEditor = ({ onSave, onCancel, settings, isOnline }: MissionEditorProps) => {
     const [mode, setMode] = useState<'magic' | 'manual'>('magic');
     const [magicInput, setMagicInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -682,7 +685,18 @@ const MissionEditor = ({ onSave, onCancel, settings }: MissionEditorProps) => {
 
     const t = TRANSLATIONS[settings.language] || TRANSLATIONS['en'];
 
+    // Automatically switch to manual mode if offline
+    useEffect(() => {
+        if (!isOnline && mode === 'magic') {
+            setMode('manual');
+        }
+    }, [isOnline]);
+
     const handleMagicFill = async () => {
+        if (!isOnline) {
+             alert("Offline: AI features are unavailable.");
+             return;
+        }
         if (!magicInput.trim()) return;
         setIsLoading(true);
         try {
@@ -739,13 +753,23 @@ const MissionEditor = ({ onSave, onCancel, settings }: MissionEditorProps) => {
     return (
         <div className="flex flex-col h-full bg-white dark:bg-gray-950 transition-colors duration-300">
             <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-950 sticky top-0 z-10"><button onClick={onCancel} className="text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 p-2 rounded-full"><X size={20} /></button><h2 className="font-bold text-lg text-gray-900 dark:text-gray-100">{t.newMission}</h2><button onClick={handleSave} className="text-brand-600 font-bold hover:bg-brand-50 dark:hover:bg-brand-900/30 px-3 py-1 rounded-lg">{t.save}</button></div>
-            <div className="flex p-2 bg-gray-50 dark:bg-gray-800 m-4 rounded-xl"><button onClick={() => setMode('magic')} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${mode === 'magic' ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'}`}><Wand2 size={14} /> {t.magicFill}</button><button onClick={() => setMode('manual')} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${mode === 'manual' ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'}`}><FileText size={14} /> {t.manual}</button></div>
+            <div className="flex p-2 bg-gray-50 dark:bg-gray-800 m-4 rounded-xl">
+                <button onClick={() => isOnline && setMode('magic')} disabled={!isOnline} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${mode === 'magic' ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'} ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''}`}><Wand2 size={14} /> {t.magicFill}</button>
+                <button onClick={() => setMode('manual')} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${mode === 'manual' ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'}`}><FileText size={14} /> {t.manual}</button>
+            </div>
+            
+            {!isOnline && mode === 'manual' && (
+                 <div className="mx-4 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-900/30 rounded-lg flex items-center gap-2 text-xs text-yellow-700 dark:text-yellow-400 mb-2">
+                    <WifiOff size={14}/> <span>You are offline. AI features are disabled.</span>
+                 </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-6 pb-6">
                 {mode === 'magic' ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
                         <div className="bg-brand-50 dark:bg-brand-900/20 p-4 rounded-2xl border border-brand-100 dark:border-brand-900/30"><h3 className="font-bold text-brand-800 dark:text-brand-300 text-sm mb-1 flex items-center gap-2"><Info size={14}/> {t.howItWorks}</h3><p className="text-xs text-brand-600 dark:text-brand-400 mb-2">{t.howItWorksDesc}</p><p className="text-xs text-brand-500 dark:text-brand-300 italic bg-white/50 dark:bg-black/20 p-2 rounded-lg border border-brand-100/50 dark:border-brand-500/20">{t.howItWorksExample}</p></div>
                         <textarea className="w-full h-40 p-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:bg-white dark:focus:bg-gray-900 focus:border-brand-300 outline-none transition-all resize-none text-start dark:text-white" placeholder={t.typeHere} value={magicInput} onChange={e => setMagicInput(e.target.value)} />
-                        <button onClick={handleMagicFill} disabled={isLoading || !magicInput} className="w-full py-4 bg-brand-600 text-white rounded-xl font-bold shadow-lg shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">{isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={18} />}{isLoading ? t.analyzing : t.generateDetails}</button>
+                        <button onClick={handleMagicFill} disabled={isLoading || !magicInput || !isOnline} className="w-full py-4 bg-brand-600 text-white rounded-xl font-bold shadow-lg shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">{isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={18} />}{isLoading ? t.analyzing : (isOnline ? t.generateDetails : "Unavailable Offline")}</button>
                     </div>
                 ) : (
                     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -843,6 +867,7 @@ const App = () => {
     theme: 'system' // Default theme
   } as Settings);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => 
     safeJsonParse(STORAGE_KEY_USER_PROFILE, null)
@@ -852,13 +877,23 @@ const App = () => {
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
 
   useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     const handler = (e: Event) => {
       e.preventDefault();
       setInstallPrompt(e as BeforeInstallPromptEvent);
     };
 
     window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
+    return () => {
+        window.removeEventListener('beforeinstallprompt', handler);
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   const handleInstallClick = async () => {
@@ -934,7 +969,7 @@ const App = () => {
   const renderView = () => {
     switch (view) {
       case 'dashboard': return <Dashboard missions={missions} settings={settings} userProfile={userProfile} onSelect={goToDetails} onAdd={() => setView('add')} onOpenSettings={() => setView('settings')} />;
-      case 'add': return <MissionEditor onSave={addMission} onCancel={() => setView('dashboard')} settings={settings} />;
+      case 'add': return <MissionEditor onSave={addMission} onCancel={() => setView('dashboard')} settings={settings} isOnline={isOnline} />;
       case 'details':
         const mission = missions.find(m => m.id === selectedMissionId);
         if (!mission) return <div className="p-4">Mission not found</div>;
@@ -946,6 +981,13 @@ const App = () => {
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-50 dark:bg-gray-950 flex flex-col shadow-2xl overflow-hidden relative font-sans text-gray-900 dark:text-gray-100 group transition-colors duration-300" style={{ height: '100dvh' }}>
+      
+      {!isOnline && (
+        <div className="bg-yellow-500 text-white text-xs font-bold py-1 px-4 text-center z-50 flex items-center justify-center gap-2">
+            <WifiOff size={12} /> Offline Mode
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto no-scrollbar bg-gray-50 dark:bg-gray-950 pb-32 transition-colors duration-300">{renderView()}</div>
       
       {/* Enhanced Bottom Navigation Bar */}
